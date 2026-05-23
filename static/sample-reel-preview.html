@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sample Reel — Wealth Vault</title>
+<style>
+:root{--gold:#D4AF37;--gold-dim:rgba(212,175,55,.08);--gold-border:rgba(212,175,55,.22);--card:#0e0e0e;--muted:#666;--radius:12px}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#000;color:#e8e0d0;font-family:system-ui,-apple-system,sans-serif;min-height:100vh;padding:32px 24px 60px}
+h1{font-size:1.55rem;font-weight:950;letter-spacing:-.02em;color:var(--gold);margin-bottom:4px}
+.subtitle{color:var(--muted);font-size:.86rem;margin-bottom:32px}
+.grid{display:grid;grid-template-columns:300px 1fr;gap:28px;align-items:start;max-width:1060px}
+
+/* ─── Phone frame ─── */
+.phone-wrap{display:flex;flex-direction:column;align-items:center;gap:14px}
+.phone{width:268px;height:476px;background:#050505;border-radius:34px;border:2.5px solid #252525;position:relative;overflow:hidden;box-shadow:0 0 0 6px #0d0d0d,0 0 55px rgba(212,175,55,.09)}
+.phone-notch{position:absolute;top:14px;left:50%;transform:translateX(-50%);width:70px;height:10px;background:#111;border-radius:6px;z-index:10}
+.phone-bg{position:absolute;inset:0;background:linear-gradient(160deg,#0c0906 0%,#050505 45%,#080508 100%)}
+.phone-bg::before{content:'';position:absolute;inset:0;background:
+  radial-gradient(ellipse at 28% 18%,rgba(212,175,55,.06) 0%,transparent 55%),
+  radial-gradient(ellipse at 78% 72%,rgba(160,80,10,.04) 0%,transparent 48%)}
+.phone-glow{position:absolute;bottom:0;left:0;right:0;height:200px;background:linear-gradient(to top,rgba(212,175,55,.07),transparent);pointer-events:none}
+.wm{position:absolute;bottom:26px;right:14px;font-size:8.5px;font-weight:700;color:rgba(255,255,255,.09);letter-spacing:.06em;text-transform:uppercase}
+.phone-tag{position:absolute;top:30px;left:16px;font-size:8.5px;font-weight:900;letter-spacing:.1em;text-transform:uppercase;color:rgba(212,175,55,.65);background:rgba(212,175,55,.07);border:1px solid rgba(212,175,55,.14);padding:2px 8px;border-radius:4px}
+.caption-stage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:0 16px}
+.caption-word{font-size:38px;font-weight:950;color:#fff;text-align:center;text-shadow:0 0 20px rgba(0,0,0,.95),0 3px 0 rgba(0,0,0,.9);letter-spacing:-.01em;line-height:1.08;text-transform:uppercase;max-width:240px;word-break:break-word}
+.side-icons{position:absolute;right:10px;bottom:100px;display:flex;flex-direction:column;gap:14px;align-items:center}
+.si{display:flex;flex-direction:column;align-items:center;gap:2px;color:rgba(255,255,255,.7);font-size:19px}
+.si span{font-size:9px;color:rgba(255,255,255,.5);font-weight:700}
+.timer-bar{width:268px;height:3px;background:#111;border-radius:2px;overflow:hidden}
+.timer-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--gold),#c8a020);animation:timerfill 70s linear forwards}
+@keyframes timerfill{0%{width:0%}100%{width:100%}}
+.phone-stats{display:flex;gap:20px;justify-content:center}
+.pstat{text-align:center}
+.pstat-val{font-size:1rem;font-weight:900;color:var(--gold)}
+.pstat-lbl{font-size:.6rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-top:1px;font-weight:700}
+
+/* ─── Info panel ─── */
+.card{background:var(--card);border:1px solid #1a1a1a;border-radius:var(--radius);padding:20px 22px;margin-bottom:14px}
+.card-title{font-size:.66rem;font-weight:900;letter-spacing:.1em;text-transform:uppercase;color:var(--gold);margin-bottom:13px}
+.pipeline-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.pb{display:inline-flex;align-items:center;gap:5px;font-size:.64rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;padding:4px 11px;border-radius:6px}
+.pb-ok{background:rgba(34,197,94,.07);border:1px solid rgba(34,197,94,.18);color:#22c55e}
+.pb-gold{background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold)}
+.meta-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+.mc{background:#0a0a0a;border:1px solid #161616;border-radius:8px;padding:9px 10px;text-align:center}
+.mc-lbl{font-size:.58rem;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:3px}
+.mc-val{font-size:1.05rem;font-weight:950;color:var(--gold)}
+.script-text{font-size:.85rem;line-height:1.78;color:#c0b8a8;white-space:pre-wrap}
+.pause{color:rgba(212,175,55,.45);font-style:italic;font-size:.74rem}
+.title-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #111}
+.title-row:last-child{border-bottom:none}
+.score-col{width:52px;flex-shrink:0;text-align:right}
+.score-num{font-size:.6rem;font-weight:900;color:var(--gold);margin-bottom:2px}
+.score-bar{height:3.5px;background:#1a1a1a;border-radius:2px;overflow:hidden}
+.score-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--gold),#a88010)}
+.title-text{font-size:.8rem;font-weight:700;color:#e0d8c8;flex:1;line-height:1.4}
+.best-badge{font-size:.57rem;font-weight:900;letter-spacing:.08em;text-transform:uppercase;background:rgba(212,175,55,.12);border:1px solid var(--gold-border);color:var(--gold);padding:2px 7px;border-radius:4px;flex-shrink:0}
+.kw-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:5px}
+.kw{display:flex;align-items:center;gap:7px;font-size:.76rem;color:#b8b0a0;background:#0a0a0a;border:1px solid #161616;border-radius:7px;padding:6px 10px}
+.kw-dot{color:var(--gold);font-size:.72rem;flex-shrink:0}
+.tags{display:flex;flex-wrap:wrap;gap:5px}
+.tag{font-size:.68rem;font-weight:700;color:var(--muted);background:#0d0d0d;border:1px solid #1c1c1c;padding:3px 8px;border-radius:5px}
+.desc-box{font-size:.76rem;line-height:1.72;color:var(--muted);background:#060606;border:1px solid #111;border-radius:8px;padding:12px 14px;white-space:pre-wrap}
+.watermark-note{font-size:.66rem;color:var(--muted);text-align:center;margin-top:6px}
+
+/* ─── Fidelity Summary ─── */
+.fidelity-card{background:#080808;border:1px solid rgba(212,175,55,.2);border-radius:var(--radius);padding:18px 20px;margin-bottom:14px}
+.fidelity-title{font-size:.62rem;font-weight:900;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin-bottom:13px}
+.fidelity-row{display:flex;align-items:center;gap:10px;font-size:.8rem;margin-bottom:8px}
+.fidelity-row:last-child{margin-bottom:0}
+.fidelity-check{color:#22c55e;font-size:.95rem;font-weight:900;flex-shrink:0;line-height:1}
+.fidelity-label{color:#888}
+.fidelity-label strong{color:#e0d8c8;font-weight:800}
+.fidelity-divider{border:none;border-top:1px solid #141414;margin:10px 0}
+.fallback-dot{width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 6px #22c55e;display:inline-block;flex-shrink:0}
+.fallback-label{font-size:.72rem;color:var(--muted)}
+</style>
+</head><body>
+<h1>Sample Reel Output</h1>
+<p class="subtitle">Realistic engine output — script · captions · SEO Oracle titles · upload metadata &nbsp;|&nbsp; Topic seed: "The dark psychology the elite use to stay rich"</p>
+
+<div class="grid">
+  <!-- Phone preview -->
+  <div class="phone-wrap">
+    <div class="phone">
+      <div class="phone-bg"></div>
+      <div class="phone-notch"></div>
+      <div class="phone-glow"></div>
+      <div class="phone-tag">#WealthVault &nbsp;#Shorts</div>
+      <div class="caption-stage">
+        <div class="caption-word" id="cap">THEY</div>
+      </div>
+      <div class="side-icons">
+        <div class="si">&#10084;<span>48K</span></div>
+        <div class="si">&#128172;<span>2.1K</span></div>
+        <div class="si">&#8594;<span>Share</span></div>
+        <div class="si">&#9654;<span>More</span></div>
+      </div>
+      <div class="wm">Crypto Affiliate Hub</div>
+    </div>
+    <div class="timer-bar"><div class="timer-fill"></div></div>
+    <div class="phone-stats">
+      <div class="pstat"><div class="pstat-val">70s</div><div class="pstat-lbl">Duration</div></div>
+      <div class="pstat"><div class="pstat-val">30fps</div><div class="pstat-lbl">Frame rate</div></div>
+      <div class="pstat"><div class="pstat-val">1080p</div><div class="pstat-lbl">Portrait</div></div>
+    </div>
+    <div class="watermark-note">10% opacity ghost watermark · 8 Pexels clips · 3 s swaps</div>
+  </div>
+
+  <!-- Info panel -->
+  <div>
+    <div class="pipeline-row">
+      <span class="pb pb-ok">&#10003; Gemini 1.5 Flash — Script</span>
+      <span class="pb pb-ok">&#10003; ElevenLabs Brian — Voice</span>
+      <span class="pb pb-ok">&#10003; 8 Pexels Clips — B-roll</span>
+      <span class="pb pb-ok">&#10003; MoviePy — 30 fps Render</span>
+      <span class="pb pb-gold">&#9670; SEO Oracle — 5 Titles</span>
+      <span class="pb pb-gold">&#9670; A/B Test — Variant A</span>
+    </div>
+
+    <div class="meta-grid">
+      <div class="mc"><div class="mc-lbl">Duration</div><div class="mc-val">70 s</div></div>
+      <div class="mc"><div class="mc-lbl">Word count</div><div class="mc-val">185</div></div>
+      <div class="mc"><div class="mc-lbl">Clip swaps</div><div class="mc-val">22×</div></div>
+    </div>
+
+    <!-- Fidelity Summary -->
+    <div class="fidelity-card">
+      <div class="fidelity-title">Fidelity Summary — Checklist of Domination</div>
+      <div class="fidelity-row">
+        <span class="fidelity-check">&#10003;</span>
+        <span class="fidelity-label"><strong>4K Forge Active</strong> — Real-ESRGAN smoothing · 1080p portrait at 30fps</span>
+      </div>
+      <div class="fidelity-row">
+        <span class="fidelity-check">&#10003;</span>
+        <span class="fidelity-label"><strong>Sage Mentor Tone</strong> — ElevenLabs 'Brian' confirmed as audio source</span>
+      </div>
+      <div class="fidelity-row">
+        <span class="fidelity-check">&#10003;</span>
+        <span class="fidelity-label"><strong>Optimal Duration (60–75 s)</strong> — Script locked at 185 words · 70.3 s render</span>
+      </div>
+      <div class="fidelity-row">
+        <span class="fidelity-check">&#10003;</span>
+        <span class="fidelity-label"><strong>Global Audio Bridge</strong> — Spanish/Hindi audience layer tagged in upload metadata</span>
+      </div>
+      <div class="fidelity-row">
+        <span class="fidelity-check">&#10003;</span>
+        <span class="fidelity-label"><strong>Ghost Watermark</strong> — "Crypto Affiliate Hub" composited at 10% opacity</span>
+      </div>
+      <hr class="fidelity-divider">
+      <div class="fidelity-row">
+        <span class="fallback-dot"></span>
+        <span class="fallback-label">OpenRouter 429-fallback — online · bridge active</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">&#9656; Generated Script (185 words · 60–75 s)</div>
+      <div class="script-text">They don't want you to know this.
+
+The elite don't work harder — they work on things that <em>compound</em>. While the majority exchange time for money, the top 1% design systems that earn while they sleep. That gap isn't talent. It's architecture. <span class="pause">[pause]</span>
+
+There is a psychology of wealth that operates below the surface. They call it strategic invisibility. You don't see the move until it's already been made — and by then, the position is locked. <span class="pause">[pause]</span>
+
+Information asymmetry is the real currency. The moment you understand what the crowd hasn't processed yet, you win before the race begins. Not luck. Timing engineered through silence. <span class="pause">[pause]</span>
+
+The wealthiest minds never reveal their next move. They let the noise play out. They let the market react. Then they step into the vacuum — calm, calculated, and already positioned. <span class="pause">[pause]</span>
+
+And that's exactly why they spend millions keeping financial education out of mainstream schools. Because a financially literate population cannot be harvested. A confused one can.
+
+The dark truth? Most people will scroll past this. The rest will start building tonight.
+
+They don't want you to know this.</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">&#9656; SEO Oracle — 5 Title Variants</div>
+      <div class="title-row">
+        <div class="score-col"><div class="score-num">96</div><div class="score-bar"><div class="score-fill" style="width:96%"></div></div></div>
+        <div class="title-text">The DARK SECRET The Rich Will Never Tell You</div>
+        <span class="best-badge">Best Pick</span>
+      </div>
+      <div class="title-row">
+        <div class="score-col"><div class="score-num">91</div><div class="score-bar"><div class="score-fill" style="width:91%"></div></div></div>
+        <div class="title-text">Why You Stay Broke — And How They Keep It That Way</div>
+      </div>
+      <div class="title-row">
+        <div class="score-col"><div class="score-num">88</div><div class="score-bar"><div class="score-fill" style="width:88%"></div></div></div>
+        <div class="title-text">The Silent Weapon of the Elite (Exposed)</div>
+      </div>
+      <div class="title-row">
+        <div class="score-col"><div class="score-num">85</div><div class="score-bar"><div class="score-fill" style="width:85%"></div></div></div>
+        <div class="title-text">Financial Education They BANNED From Schools</div>
+      </div>
+      <div class="title-row">
+        <div class="score-col"><div class="score-num">82</div><div class="score-bar"><div class="score-fill" style="width:82%"></div></div></div>
+        <div class="title-text">The 1% Blueprint: How Power Compounds in Silence</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">&#9656; SEO Keywords (8)</div>
+      <div class="kw-grid">
+        <div class="kw"><span class="kw-dot">&#9670;</span>dark psychology wealth</div>
+        <div class="kw"><span class="kw-dot">&#9670;</span>elite money secrets</div>
+        <div class="kw"><span class="kw-dot">&#9670;</span>financial manipulation</div>
+        <div class="kw"><span class="kw-dot">&#9670;</span>compound wealth systems</div>
+        <div class="kw"><span class="kw-dot">&#9670;</span>information asymmetry</div>
+        <div class="kw"><span class="kw-dot">&#9670;</span>broke mindset trap</div>
+        <div class="kw"><span class="kw-dot">&#9670;</span>billionaire tactics</div>
+        <div class="kw"><span class="kw-dot">&#9670;</span>strategic invisibility</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">&#9656; Upload Tags (12)</div>
+      <div class="tags">
+        <span class="tag">#wealth</span><span class="tag">#darkpsychology</span><span class="tag">#shorts</span>
+        <span class="tag">#mindset</span><span class="tag">#money</span><span class="tag">#elitesecrets</span>
+        <span class="tag">#financialfreedom</span><span class="tag">#psychology</span><span class="tag">#viral</span>
+        <span class="tag">#richvspoor</span><span class="tag">#WealthVault</span><span class="tag">#WealthVaultEntry</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">&#9656; YouTube Description</div>
+      <div class="desc-box">The elite don't work harder — they work on systems that compound while you sleep.
+
+This isn't motivation. This is the blueprint they don't teach in schools.
+
+Strategic invisibility. Information asymmetry. Engineered positioning.
+
+If this hit, follow for the dark psychology of wealth they hope you never find.
+
+#Shorts #Wealth #DarkPsychology #MoneyMindset #EliteSecrets #WealthVault</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const WORDS = "THEY DON'T WANT YOU TO KNOW THIS THE ELITE DON'T WORK HARDER THEY WORK ON THINGS THAT COMPOUND WHILE THE MAJORITY EXCHANGE TIME FOR MONEY THE TOP ONE PERCENT DESIGN SYSTEMS THAT EARN WHILE THEY SLEEP THAT GAP ISN'T TALENT IT'S ARCHITECTURE THERE IS A PSYCHOLOGY OF WEALTH THAT OPERATES BELOW THE SURFACE THEY CALL IT STRATEGIC INVISIBILITY YOU DON'T SEE THE MOVE UNTIL IT'S ALREADY BEEN MADE INFORMATION ASYMMETRY IS THE REAL CURRENCY THE MOMENT YOU UNDERSTAND WHAT THE CROWD HASN'T PROCESSED YOU WIN BEFORE THE RACE BEGINS THE WEALTHIEST MINDS NEVER REVEAL THEIR NEXT MOVE THEY LET THE NOISE PLAY OUT THEN STEP INTO THE VACUUM CALM CALCULATED AND ALREADY POSITIONED AND THAT'S EXACTLY WHY THEY SPEND MILLIONS KEEPING FINANCIAL EDUCATION OUT OF SCHOOLS BECAUSE A FINANCIALLY LITERATE POPULATION CANNOT BE HARVESTED THEY DON'T WANT YOU TO KNOW THIS".split(' ');
+let idx = 0;
+const cap = document.getElementById('cap');
+function nextWord() {
+  cap.style.transform = 'scale(0.82)';
+  cap.style.opacity = '0';
+  setTimeout(() => {
+    cap.textContent = WORDS[idx % WORDS.length];
+    idx++;
+    cap.style.transform = 'scale(1)';
+    cap.style.opacity = '1';
+  }, 80);
+}
+cap.style.transition = 'transform .15s cubic-bezier(.34,1.56,.64,1), opacity .08s';
+setInterval(nextWord, 340);
+</script>
+</body></html>
