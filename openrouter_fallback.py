@@ -80,17 +80,17 @@ def call_openrouter(prompt: str, temperature: float = 0.92, max_tokens: int = 14
     raise RuntimeError(f"All OpenRouter models failed. Last error: {last_error}")
 
 
-def _extract_json(text: str) -> dict:
+def _extract_json(text: str) -> dict | list:
     cleaned = text.strip()
     cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
     cleaned = re.sub(r"\s*```$", "", cleaned)
-    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    match = re.search(r"(\{.*\}|\[.*\])", cleaned, re.DOTALL)
     if match:
         cleaned = match.group(0)
     return json.loads(cleaned)
 
 
-def call_with_fallback(prompt: str, primary_call_fn, temperature: float = 0.92, max_tokens: int = 1400) -> dict:
+def call_with_fallback(prompt: str, primary_call_fn, temperature: float = 0.92, max_tokens: int = 1400) -> dict | list:
     """
     Tries primary_call_fn() first. If it raises any error (rate-limit, quota,
     or model-not-found), falls back to OpenRouter immediately without stopping

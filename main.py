@@ -1,10 +1,15 @@
 import functools
 import json
 import os
+import random
 import re
 import secrets
+import threading
 import time
+import copy
 from pathlib import Path
+
+import github_backup
 
 from dotenv import load_dotenv
 
@@ -29,7 +34,6 @@ from flask import (
     session,
     url_for,
 )
-from gtts import gTTS
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import ab_tester
@@ -38,6 +42,7 @@ import audio_engine
 import dashboard
 import google_auth
 import retention_engine
+import title_ab_tracker
 import trend_hunter
 import uploader
 import viral_engine
@@ -208,6 +213,18 @@ _API_KEY_NAMES = [
     "DEEPGRAM_API_KEY",
     "FISH_AUDIO_API_KEY",
     "PEXELS_API_KEY",
+    "PIXABAY_API_KEY",
+    "VIBE_VOICE_API_KEY",
+    "MINIMAX_KEY_1",
+    "MINIMAX_KEY_2",
+    "MINIMAX_KEY_3",
+    "RESEND_API_KEY",
+    "NOWPAYMENTS_PUBLIC_KEY",
+    "NOWPAYMENTS_API_KEY",
+    "MUAPI_API_KEY",
+    "KLING_ACCESS_KEY",
+    "KLING_SECRET_KEY",
+    "GITHUB_TOKEN",
 ]
 
 
@@ -850,9 +867,9 @@ VAULT_PAGE = r"""
     <h3>Omni Empire Engine v35</h3>
     <div class="pill-row">
       <span class="pill {{ 'ok' if youtube_ready else 'bad' }}"><span class="pill-dot"></span>YouTube {{ 'Connected' if youtube_ready else 'Offline' }}</span>
-      <span class="pill {{ 'ok' if pexels_ready else 'bad' }}"><span class="pill-dot"></span>Pexels {{ 'OK' if pexels_ready else 'Missing' }}</span>
+      <span class="pill {{ 'ok' if pexels_ready else 'warn' }}"><span class="pill-dot"></span>Clips {{ 'OK' if pexels_ready else 'Pixabay only' }}</span>
       <span class="pill {{ 'ok' if gemini_ready else 'bad' }}"><span class="pill-dot"></span>Gemini {{ 'OK' if gemini_ready else 'Missing' }}</span>
-      <span class="pill {{ 'ok' if elevenlabs_ready else 'warn' }}"><span class="pill-dot"></span>ElevenLabs {{ 'OK' if elevenlabs_ready else 'gTTS' }}</span>
+      <span class="pill {{ 'ok' if elevenlabs_ready else 'warn' }}"><span class="pill-dot"></span>ElevenLabs {{ 'OK' if elevenlabs_ready else 'Deepgram/Fish' }}</span>
       <span class="pill {{ 'ok' if openrouter_ready else 'warn' }}"><span class="pill-dot"></span>OpenRouter {{ 'OK' if openrouter_ready else 'Optional' }}</span>
       <span class="pill {{ 'ok' if scheduler_running else 'warn' }}"><span class="pill-dot"></span>Scheduler {{ 'Live' if scheduler_running else 'Off' }}</span>
     </div>
@@ -927,7 +944,7 @@ VAULT_PAGE = r"""
       </div>
       <div>
         <label style="display:block;font-size:0.62rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);font-weight:900;margin-bottom:4px;">CTA Line</label>
-        <input name="affiliate_cta" type="text" value="{{ affiliate_cta }}" placeholder="Crypto Affiliate Hub — Start today."
+        <input name="affiliate_cta" type="text" value="{{ affiliate_cta }}" placeholder="Dark Mind Files — Follow for more."
           style="width:100%;background:#080808;border:1px solid #1e1e1e;border-radius:8px;color:var(--text);padding:8px 11px;font:inherit;font-size:0.8rem;">
       </div>
       <button type="submit" style="border:0;border-radius:8px;background:var(--gold-dim);border:1px solid var(--gold-border);color:var(--gold);font-weight:900;font-size:0.72rem;padding:8px;cursor:pointer;letter-spacing:0.08em;text-transform:uppercase;">Save Settings</button>
@@ -1011,36 +1028,31 @@ VAULT_PAGE = r"""
       <button class="btn-gold" type="submit">&#9654;&ensp;FIRE THE VAULT NOW</button>
     </form>
 
-    <!-- LIVE PIPELINE TRACKER — updated every 2.5s via JS -->
-    <div id="pipeline-tracker" class="pipeline-block">
+    <!-- LIVE PIPELINE TRACKER — active-job state only (no idle clutter) -->
+    <div id="pipeline-tracker" class="pipeline-block" style="display:none;">
       <div class="pipeline-header">
-        <span class="pipeline-state" id="pt-state">IDLE</span>
+        <span class="pipeline-state" id="pt-state">RUNNING</span>
         <span class="pipeline-elapsed" id="pt-elapsed"></span>
       </div>
-      <div class="pipeline-msg" id="pt-msg">Waiting for next scheduled run — 08:00 London / 20:00 New York.</div>
-      <div class="pipeline-stages" id="pt-stages">
-        <div class="stage" id="ps-script"><div class="stage-dot">&#9998;</div><div class="stage-label">Script</div></div>
-        <div class="stage" id="ps-voice"><div class="stage-dot">&#9654;</div><div class="stage-label">Voice</div></div>
-        <div class="stage" id="ps-broll"><div class="stage-dot">&#9634;</div><div class="stage-label">B-Roll</div></div>
-        <div class="stage" id="ps-render"><div class="stage-dot">&#9881;</div><div class="stage-label">Render</div></div>
-        <div class="stage" id="ps-upload"><div class="stage-dot">&#8679;</div><div class="stage-label">Upload</div></div>
-        <div class="stage" id="ps-done"><div class="stage-dot">&#10003;</div><div class="stage-label">Done</div></div>
-      </div>
-      <div class="progress-wrap"><div class="progress-bar" id="pt-bar" style="width:0%"></div></div>
+      <div class="pipeline-msg" id="pt-msg"></div>
+      <div class="progress-wrap" style="margin-top:10px;"><div class="progress-bar" id="pt-bar" style="width:0%"></div></div>
       <div class="pipeline-meta" id="pt-meta"></div>
-      {% if latest_job and latest_job.title_variants %}
-      <details id="pt-variants" style="margin-top:12px;">
-        <summary style="cursor:pointer;color:var(--muted);font-size:0.75rem;letter-spacing:0.06em;">SEO Oracle — Title Variants</summary>
-        <div style="margin-top:10px;display:grid;gap:5px;" id="pt-variants-list">
-        {% for v in latest_job.title_variants %}
-          <div class="variant-row {{ 'best' if loop.first }}">
-            <span style="color:{{ 'var(--gold)' if loop.first else '#777' }};">{{ v.title }}</span>
-            <span style="color:var(--muted);font-weight:800;flex-shrink:0;">{{ v.score }}</span>
-          </div>
-        {% endfor %}
-        </div>
-      </details>
-      {% endif %}
+    </div>
+
+    <!-- VOICE TIER STATUS PANEL -->
+    <div id="voice-tier-panel" style="margin-top:14px;padding:14px 16px;border-radius:12px;background:rgba(212,175,55,0.03);border:1px solid rgba(212,175,55,0.15);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+        <span style="font-size:0.62rem;font-weight:900;letter-spacing:0.2em;text-transform:uppercase;color:var(--muted);">Voice Engine</span>
+        <button onclick="forceVoiceRepoll(this)" style="font-size:0.68rem;padding:3px 10px;border-radius:6px;border:1px solid #2a2a2a;background:transparent;color:var(--muted);cursor:pointer;letter-spacing:0.04em;transition:color .2s,border-color .2s;"
+          onmouseover="this.style.color='var(--gold)';this.style.borderColor='var(--gold)';"
+          onmouseout="this.style.color='var(--muted)';this.style.borderColor='#2a2a2a';">
+          &#8635; Re-Poll Now
+        </button>
+      </div>
+      <div id="voice-tier-rows" style="display:grid;gap:6px;">
+        <div style="color:var(--muted);font-size:0.74rem;">Loading…</div>
+      </div>
+      <div id="voice-poll-ts" style="margin-top:8px;font-size:0.65rem;color:#444;"></div>
     </div>
 
     <!-- FIDELITY SUMMARY / CHECKLIST OF DOMINATION -->
@@ -1050,47 +1062,63 @@ VAULT_PAGE = r"""
       <div style="display:grid;gap:7px;">
         <div style="display:flex;align-items:center;gap:10px;font-size:0.8rem;">
           <span style="color:#22c55e;font-size:0.9rem;font-weight:900;flex-shrink:0;">&#10003;</span>
-          <span style="color:#888;"><strong style="color:var(--text);">4K Forge Active</strong> — Real-ESRGAN smoothing &amp; 1080p portrait at 30fps</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:10px;font-size:0.8rem;">
-          <span style="color:#22c55e;font-size:0.9rem;font-weight:900;flex-shrink:0;">&#10003;</span>
-          <span style="color:#888;"><strong style="color:var(--text);">Sage Mentor Tone</strong> — ElevenLabs 'Brian' is the confirmed audio source</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:10px;font-size:0.8rem;">
-          <span style="color:{{ '#22c55e' if latest_job.get('duration_seconds', 0) >= 60 else '#f87171' }};font-size:0.9rem;font-weight:900;flex-shrink:0;">&#10003;</span>
           <span style="color:#888;"><strong style="color:var(--text);">Optimal Duration (60–75 s)</strong> — Script enforced at 150+ words before render</span>
         </div>
         <div style="display:flex;align-items:center;gap:10px;font-size:0.8rem;">
           <span style="color:#22c55e;font-size:0.9rem;font-weight:900;flex-shrink:0;">&#10003;</span>
-          <span style="color:#888;"><strong style="color:var(--text);">Global Audio Bridge</strong> — Spanish/Hindi audience layer tagged in upload metadata</span>
+          <span style="color:#888;"><strong style="color:var(--text);">Premium Voice Active</strong> — ElevenLabs → Deepgram → Fish Audio waterfall · 24 h auto-recovery</span>
         </div>
         <div style="display:flex;align-items:center;gap:10px;font-size:0.8rem;">
           <span style="color:#22c55e;font-size:0.9rem;font-weight:900;flex-shrink:0;">&#10003;</span>
-          <span style="color:#888;"><strong style="color:var(--text);">Ghost Watermark</strong> — "Crypto Affiliate Hub" composited at 10% opacity</span>
+          <span style="color:#888;"><strong style="color:var(--text);">Film Grain Overlay</strong> — FFmpeg <code style="font-size:0.7rem;color:#aaa;">noise=alls=10:allf=t</code> blends AI + stock footage</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;font-size:0.8rem;">
+          <span style="color:#22c55e;font-size:0.9rem;font-weight:900;flex-shrink:0;">&#10003;</span>
+          <span style="color:#888;"><strong style="color:var(--text);">Zero-Repeat B-Roll</strong> — SQLite tracker blocks every clip ID ever used across all builds</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;font-size:0.8rem;">
+          <span style="color:#22c55e;font-size:0.9rem;font-weight:900;flex-shrink:0;">&#10003;</span>
+          <span style="color:#888;"><strong style="color:var(--text);">MiniMax Quality Guard</strong> — Cinematic modifiers + negative constraints on every AI prompt</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;font-size:0.8rem;">
+          <span style="color:#22c55e;font-size:0.9rem;font-weight:900;flex-shrink:0;">&#10003;</span>
+          <span style="color:#888;"><strong style="color:var(--text);">Caption Safe Zone</strong> — Phonetic correction map + 900 px / 65% viewport anchor</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;font-size:0.8rem;">
+          <span style="color:#22c55e;font-size:0.9rem;font-weight:900;flex-shrink:0;">&#10003;</span>
+          <span style="color:#888;"><strong style="color:var(--text);">SEO Metadata Engine</strong> — LLM title (&lt;60 chars) · 2-3 sentence dark-psych description · 3-4 niche hashtags</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;font-size:0.8rem;">
+          <span style="color:#22c55e;font-size:0.9rem;font-weight:900;flex-shrink:0;">&#10003;</span>
+          <span style="color:#888;"><strong style="color:var(--text);">Ghost Watermark</strong> — Composited at 10% opacity on every frame</span>
         </div>
         <div style="display:flex;align-items:center;gap:10px;font-size:0.8rem;margin-top:4px;padding-top:8px;border-top:1px solid #141414;">
           <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:{{ '#22c55e' if openrouter_ready else '#f87171' }};box-shadow:0 0 6px {{ '#22c55e' if openrouter_ready else '#f87171' }};"></span>
           <span style="color:var(--muted);font-size:0.74rem;">OpenRouter 429-fallback — {{ 'online · bridge active' if openrouter_ready else 'key missing — Gemini-only mode' }}</span>
         </div>
       </div>
+      <!-- Admin: reset clip tracker + GitHub backup -->
+      <div style="margin-top:14px;padding-top:10px;border-top:1px solid #141414;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <span style="font-size:0.65rem;font-weight:900;letter-spacing:0.14em;text-transform:uppercase;color:var(--muted);">Admin Tools</span>
+        <button id="btn-reset-tracker" onclick="resetClipTracker(event)"
+          style="font-size:0.7rem;padding:4px 12px;border-radius:6px;border:1px solid #333;background:transparent;color:#888;cursor:pointer;letter-spacing:0.05em;transition:color .2s,border-color .2s;"
+          onmouseover="this.style.color='#f87171';this.style.borderColor='#f87171';"
+          onmouseout="this.style.color='#888';this.style.borderColor='#333';">
+          &#128465; Reset B-Roll Tracker
+        </button>
+        <button id="btn-github-backup" onclick="triggerGitHubBackup(this)"
+          style="font-size:0.7rem;padding:4px 12px;border-radius:6px;border:1px solid #333;background:transparent;color:#888;cursor:pointer;letter-spacing:0.05em;transition:color .2s,border-color .2s;"
+          onmouseover="this.style.color='#4ade80';this.style.borderColor='#4ade80';"
+          onmouseout="this.style.color='#888';this.style.borderColor='#333';">
+          &#128190; Push to GitHub
+        </button>
+        <span id="tracker-reset-msg" style="font-size:0.7rem;color:var(--muted);"></span>
+        <span id="github-backup-msg" style="font-size:0.7rem;color:var(--muted);"></span>
+      </div>
     </div>
     {% endif %}
   </div>
 
-  <!-- NEXT SCHEDULED STRIKE -->
-  <div class="strike-bar">
-    <span class="strike-label">Next Strike</span>
-    <div class="strike-times">
-      <span class="strike-time">08:00</span>
-      <span class="strike-sep">·</span>
-      <span class="strike-time">20:00</span>
-    </div>
-    <span class="strike-sep" style="color:#1e1e1e">|</span>
-    <span class="strike-tz">London&thinsp;/&thinsp;New&thinsp;York</span>
-    <span class="strike-sep" style="color:#1e1e1e">|</span>
-    <span class="strike-label">IN</span>
-    <span class="strike-time" id="strike-countdown" style="font-size:0.9rem;color:var(--gold);">--:--:--</span>
-  </div>
 </main>
 
 <script>
@@ -1141,27 +1169,24 @@ VAULT_PAGE = r"""
   }
 
   function renderPipeline(job) {
+    const tracker   = document.getElementById('pipeline-tracker');
     const stateEl   = document.getElementById('pt-state');
     const msgEl     = document.getElementById('pt-msg');
     const barEl     = document.getElementById('pt-bar');
     const metaEl    = document.getElementById('pt-meta');
     const elapsedEl = document.getElementById('pt-elapsed');
-    if (!stateEl) return;
+    if (!stateEl || !tracker) return;
 
-    if (!job || job.state === 'idle') {
-      stateEl.textContent = 'IDLE';
-      stateEl.style.color = 'var(--muted)';
-      msgEl.textContent   = 'Waiting for next scheduled run — 08:00 London / 20:00 New York.';
-      barEl.style.width   = '0%';
-      metaEl.innerHTML    = '';
-      if (elapsedEl) elapsedEl.textContent = '';
-      applyStages(-1, false);
-      return;
-    }
+    const isIdle = !job || job.state === 'idle';
+    const isDone = job && (job.state === 'done' || job.state === 'cleanup');
+    const isError = job && job.state === 'error';
+    const isActive = !isIdle && !isDone && !isError;
 
-    const sm      = STAGE_MAP[job.state] || { step: 0, label: job.state.toUpperCase() };
-    const isError = job.state === 'error';
-    const isDone  = job.state === 'done' || job.state === 'cleanup';
+    // Show tracker only when a job is actively running
+    tracker.style.display = isActive ? '' : 'none';
+    if (isIdle) return;
+
+    const sm = STAGE_MAP[job.state] || { step: 0, label: job.state.toUpperCase() };
 
     stateEl.textContent = sm.label + (job.id ? ' — ' + job.id : '');
     stateEl.style.color = isError ? '#f87171' : isDone ? '#86efac' : 'var(--gold)';
@@ -1169,22 +1194,21 @@ VAULT_PAGE = r"""
     barEl.style.width   = (job.progress || 0) + '%';
     if (elapsedEl) elapsedEl.textContent = job.started_at ? fmtElapsed(job.started_at) : '';
 
-    applyStages(sm.step, isError);
-
     let meta = '';
-    if (job.seed)      meta += '<span>Seed: <em>' + job.seed.slice(0,60) + '</em></span>';
-    if (job.title)     meta += '<span>Title: <strong>' + job.title + '</strong></span>';
-    if (job.video_id)  meta += '<a href="https://youtu.be/' + job.video_id + '" target="_blank">View A on YouTube</a>';
+    if (job.seed)       meta += '<span>Seed: <em>' + job.seed.slice(0,60) + '</em></span>';
+    if (job.title)      meta += '<span>Title: <strong>' + job.title + '</strong></span>';
+    if (job.video_id)   meta += '<a href="https://youtu.be/' + job.video_id + '" target="_blank">View on YouTube</a>';
     if (job.video_id_b) meta += '<a href="https://youtu.be/' + job.video_id_b + '" target="_blank">View B on YouTube</a>';
     metaEl.innerHTML = meta;
   }
 
   let _ptTimer = null;
   function pollPipeline() {
-    fetch('/api/job-status')
+    fetch('/api/job-status', {credentials: 'include'})
       .then(r => r.json())
       .then(job => {
         renderPipeline(job);
+        _checkFireBtnState(job);   // re-enable fire button when pipeline finishes
         const active = job && job.state && !['idle','done','error','cleanup'].includes(job.state);
         clearTimeout(_ptTimer);
         _ptTimer = setTimeout(pollPipeline, active ? 2500 : 8000);
@@ -1206,26 +1230,213 @@ VAULT_PAGE = r"""
       started_at: {{ latest_job.started_at | int if latest_job else 0 }},
     };
     renderPipeline(initJob);
-    setTimeout(pollPipeline, 2500);
+    setTimeout(pollPipeline, 300);
   })();
 
-  // ── STRIKE COUNTDOWN ───────────────────────────────────────────────────
-  function updateStrikeCountdown() {
-    const now = new Date();
-    const nowSec = now.getUTCHours() * 3600 + now.getUTCMinutes() * 60 + now.getUTCSeconds();
-    const strikes = [8 * 3600, 20 * 3600];
-    let diff = strikes.find(s => s > nowSec);
-    if (diff === undefined) diff = strikes[0] + 86400;
-    diff -= nowSec;
-    const h = Math.floor(diff / 3600);
-    const m = Math.floor((diff % 3600) / 60);
-    const s = diff % 60;
-    const pad = n => String(n).padStart(2, '0');
-    const el = document.getElementById('strike-countdown');
-    if (el) el.textContent = pad(h) + 'h ' + pad(m) + 'm ' + pad(s) + 's';
+  // ── VOICE TIER STATUS PANEL ───────────────────────────────────────────────
+  const TIER_LABELS = {
+    'ElevenLabs': { model: 'Adam · pNInz6obpgmA5QC9632W', priority: 1 },
+    'Deepgram':   { model: 'aura-orpheus-en',             priority: 2 },
+    'Fish Audio': { model: 'ref/77103ba780df4e689626343516568212', priority: 3 },
+  };
+
+  function renderVoiceStatus(data) {
+    const rows  = document.getElementById('voice-tier-rows');
+    const tsEl  = document.getElementById('voice-poll-ts');
+    if (!rows) return;
+
+    const active = data.active_tier || '';
+    const status = data.status || {};
+    const checkedAt = data.checked_at || 0;
+
+    let html = '';
+    ['ElevenLabs', 'Deepgram', 'Fish Audio'].forEach(function(name) {
+      const isActive  = name === active;
+      const available = status[name] !== false;
+      const info      = TIER_LABELS[name] || {};
+      const dot       = available ? '#22c55e' : '#f87171';
+      const nameColor = isActive ? 'var(--gold)' : (available ? '#e8e0d0' : '#555');
+      const badge     = isActive
+        ? '<span style="margin-left:6px;font-size:0.6rem;font-weight:900;letter-spacing:0.1em;color:#000;background:var(--gold);padding:1px 6px;border-radius:99px;">ACTIVE</span>'
+        : '';
+      const cred = data.credits && data.credits[name] ? data.credits[name] : null;
+      const credStr = cred ? (' · ' + cred) : '';
+      html += '<div style="display:flex;align-items:center;gap:10px;font-size:0.78rem;">'
+        + '<span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:' + dot + ';"></span>'
+        + '<span style="font-weight:800;color:' + nameColor + ';min-width:90px;">' + name + badge + '</span>'
+        + '<span style="color:#555;font-size:0.7rem;">' + (info.model || '') + credStr + '</span>'
+        + '</div>';
+    });
+    rows.innerHTML = html;
+
+    if (tsEl && checkedAt) {
+      const age = Math.floor((Date.now()/1000) - checkedAt);
+      const ageStr = age < 120 ? age + 's ago' : age < 3600 ? Math.floor(age/60) + 'm ago' : Math.floor(age/3600) + 'h ago';
+      tsEl.textContent = 'Last polled ' + ageStr + ' · polls every 24 h';
+    }
   }
-  updateStrikeCountdown();
-  setInterval(updateStrikeCountdown, 1000);
+
+  function loadVoiceStatus() {
+    fetch('/api/voice-status', {credentials: 'include'})
+      .then(function(r) { return r.json(); })
+      .then(renderVoiceStatus)
+      .catch(function() {});
+  }
+
+  function forceVoiceRepoll(btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ Polling…';
+    fetch('/admin/force-voice-repoll', {
+      method: 'POST',
+      headers: {'X-Requested-With': 'XMLHttpRequest'},
+      credentials: 'include',
+      body: new FormData()
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      renderVoiceStatus(d);
+      btn.textContent = '✓ Done';
+      setTimeout(function() { btn.textContent = '↻ Re-Poll Now'; btn.disabled = false; }, 3000);
+    })
+    .catch(function() { btn.textContent = '↻ Re-Poll Now'; btn.disabled = false; });
+  }
+
+  // Initial load + refresh every 60s
+  loadVoiceStatus();
+  setInterval(loadVoiceStatus, 60000);
+
+  // ── FIRE BUTTON — AJAX with strict one-at-a-time concurrency guard ────────
+  // _fireGuard prevents double-submit at the JS level (before the backend lock).
+  // The button stays disabled until the pipeline reaches done/error state (not
+  // a fixed timeout) — pollPipeline calls _checkFireBtnState on each poll tick.
+  var _fireGuard = false;
+  var _fireBtn   = null;
+
+  function _resetFireBtn() {
+    _fireGuard = false;
+    if (_fireBtn) {
+      _fireBtn.disabled = false;
+      _fireBtn.innerHTML = '&#9654;&ensp;FIRE THE VAULT NOW';
+      _fireBtn.style.opacity = '';
+      _fireBtn = null;
+    }
+  }
+
+  // Called by pollPipeline each tick — re-enables the button when job completes
+  function _checkFireBtnState(job) {
+    if (!_fireBtn) return;
+    var terminal = !job || ['idle','done','error'].includes(job.state);
+    if (terminal) _resetFireBtn();
+  }
+
+  (function() {
+    var form = document.querySelector('.force-grid');
+    var btn  = form ? form.querySelector('.btn-gold[type="submit"]') : null;
+    if (!form || !btn) return;
+
+    form.addEventListener('submit', function(e) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (_fireGuard) return;         // JS-level dedup guard
+      _fireGuard = true;
+      _fireBtn   = btn;
+      btn.disabled = true;
+      btn.innerHTML = '&#9203;&ensp;PIPELINE FIRING…';
+      btn.style.opacity = '0.7';
+
+      var fd = new FormData(form);
+      fetch(form.action, {
+        method: 'POST',
+        headers: {'X-Requested-With': 'XMLHttpRequest'},
+        credentials: 'include',
+        body: fd
+      })
+      .then(function(r) {
+        if (r.status === 429) {
+          return r.json().then(function(d) { d._blocked = true; return d; });
+        }
+        return r.json();
+      })
+      .then(function(data) {
+        if (data.ok) {
+          btn.innerHTML = '&#9203;&ensp;RUNNING — WATCH TRACKER';
+          btn.style.opacity = '0.55';
+          // Kick the tracker into fast-poll; _checkFireBtnState will re-enable
+          clearTimeout(_ptTimer);
+          _ptTimer = setTimeout(pollPipeline, 300);
+        } else {
+          // Backend rejected (429 duplicate, missing keys, etc.)
+          _resetFireBtn();
+          var msgEl = document.getElementById('pt-msg');
+          if (msgEl) {
+            msgEl.textContent = data.message || 'Request blocked.';
+            msgEl.style.color = '#f87171';
+          }
+        }
+      })
+      .catch(function() { _resetFireBtn(); });
+    });
+  })();
+
+  // ── GITHUB BACKUP BUTTON ───────────────────────────────────────────────────
+  function triggerGitHubBackup(btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ Pushing…';
+    var msg = document.getElementById('github-backup-msg');
+    fetch('/admin/github-backup', {
+      method: 'POST',
+      headers: {'X-Requested-With': 'XMLHttpRequest'},
+      credentials: 'include',
+      body: new FormData()
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (msg) { msg.textContent = d.message || 'Done.'; msg.style.color = '#4ade80'; }
+      btn.textContent = '✓ Pushed';
+      setTimeout(function() {
+        btn.innerHTML = '&#128190; Push to GitHub';
+        btn.disabled = false;
+        if (msg) msg.textContent = '';
+      }, 4000);
+    })
+    .catch(function() {
+      if (msg) { msg.textContent = 'Push failed — check logs.'; msg.style.color = '#f87171'; }
+      btn.innerHTML = '&#128190; Push to GitHub';
+      btn.disabled = false;
+    });
+  }
+
+  // ── RESET CLIP TRACKER ────────────────────────────────────────────────────
+  function resetClipTracker(e) {
+    e.preventDefault();
+    var btn = document.getElementById('btn-reset-tracker');
+    var msg = document.getElementById('tracker-reset-msg');
+    if (!confirm('Reset the B-Roll clip tracker? All previously used Pexels/Pixabay IDs will be cleared, allowing footage to be reused in future builds.')) return;
+    btn.disabled = true;
+    msg.textContent = 'Resetting…';
+    fetch('/admin/reset-clip-tracker', {
+      method: 'POST',
+      headers: {'X-Requested-With': 'XMLHttpRequest'},
+      credentials: 'include',
+      body: new FormData()
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      msg.textContent = d.message || 'Done.';
+      msg.style.color = '#22c55e';
+      setTimeout(function() { msg.textContent = ''; msg.style.color = ''; }, 6000);
+    })
+    .catch(function() { msg.textContent = 'Request failed.'; })
+    .finally(function() { btn.disabled = false; });
+  }
+
+  // ── NAV MENU — auto-close when any nav link is clicked ───────────────────
+  document.querySelectorAll('.panel-nav-link').forEach(function(link) {
+    link.addEventListener('click', function() {
+      var toggle = document.getElementById('menu-toggle');
+      if (toggle) toggle.checked = false;
+    });
+  });
 </script>
 </body>
 </html>
@@ -1470,13 +1681,20 @@ USERS_PAGE = """
 
   <!-- API KEY STATUS PANEL -->
   {% set key_rows = [
-    ("GEMINI_API_KEY",       "Gemini Flash",       "Script generation (primary LLM)"),
-    ("OPENROUTER_API_KEY",   "OpenRouter",         "429 fallback bridge + auto-patch"),
-    ("ELEVENLABS_API_KEY",   "ElevenLabs",         "Voice tier 1 — Sage Mentor (highest quality)"),
-    ("DEEPGRAM_API_KEY",     "Deepgram Aura",      "Voice tier 2 — fallback if ElevenLabs fails"),
-    ("FISH_AUDIO_API_KEY",   "Fish Audio",         "Voice tier 3 — fallback if Deepgram fails"),
-    ("PEXELS_API_KEY",       "Pexels",             "B-roll video clips"),
-    ("SESSION_SECRET",       "Session Secret",     "Flask session security — required"),
+    ("GEMINI_API_KEY",         "Gemini Flash",         "Script generation (primary LLM)"),
+    ("OPENROUTER_API_KEY",     "OpenRouter",           "429 fallback bridge + auto-patch"),
+    ("ELEVENLABS_API_KEY",     "ElevenLabs",           "Voice tier 1 — Sage Mentor (highest quality)"),
+    ("DEEPGRAM_API_KEY",       "Deepgram Aura",        "Voice tier 2 — fallback if ElevenLabs fails"),
+    ("FISH_AUDIO_API_KEY",     "Fish Audio",           "Voice tier 3 — fallback if Deepgram fails"),
+    ("VIBE_VOICE_API_KEY",     "Vibe Voice",           "Voice tier 4 — additional TTS provider"),
+    ("MINIMAX_KEY_1",          "MiniMax Key 1",        "MiniMax AI — primary key"),
+    ("MINIMAX_KEY_2",          "MiniMax Key 2",        "MiniMax AI — rotation key 2"),
+    ("MINIMAX_KEY_3",          "MiniMax Key 3",        "MiniMax AI — rotation key 3"),
+    ("PEXELS_API_KEY",         "Pexels",               "B-roll video clips (primary)"),
+    ("PIXABAY_API_KEY",        "Pixabay",              "B-roll video clips (fallback)"),
+    ("KLING_ACCESS_KEY",       "Kling Access Key",     "Kling AI video generation"),
+    ("KLING_SECRET_KEY",       "Kling Secret Key",     "Kling AI video generation secret"),
+    ("SESSION_SECRET",         "Session Secret",       "Flask session security — required"),
   ] %}
   <div style="margin-bottom:24px;">
     <div style="font-size:.82rem;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:var(--gold);margin-bottom:10px;">API Key Status</div>
@@ -1846,7 +2064,7 @@ SETTINGS_PAGE = """
             {% endif %}
           </div>
         </div>
-        <p class="key-desc">Voice Tier 1 — Sage Mentor (Brian). Highest quality. Falls through to Deepgram → Fish Audio → gTTS if unavailable.</p>
+        <p class="key-desc">Voice Tier 1 — ElevenLabs (voice pNInz6obpgmA5QC9632W). Highest quality. Falls through to Deepgram → Fish Audio if unavailable. No local TTS fallback.</p>
         {% if keys.ELEVENLABS_API_KEY.masked %}
           <div style="margin-bottom:8px;"><span class="current-val">Current: {{ keys.ELEVENLABS_API_KEY.masked }}</span></div>
         {% endif %}
@@ -1910,7 +2128,7 @@ SETTINGS_PAGE = """
             {% endif %}
           </div>
         </div>
-        <p class="key-desc">Voice Tier 3 — Fish Audio streaming TTS. Final paid fallback before free gTTS safety net.</p>
+        <p class="key-desc">Voice Tier 3 — Fish Audio streaming TTS (ref 77103ba780df4e689626343516568212). Final paid fallback. No free TTS below this tier.</p>
         {% if keys.FISH_AUDIO_API_KEY.masked %}
           <div style="margin-bottom:8px;"><span class="current-val">Current: {{ keys.FISH_AUDIO_API_KEY.masked }}</span></div>
         {% endif %}
@@ -1951,6 +2169,348 @@ SETTINGS_PAGE = """
           {% if keys.PEXELS_API_KEY.source == 'saved' %}
           <form method="POST" action="{{ url_for('admin_settings_clear_key') }}" onsubmit="return confirm('Remove PEXELS_API_KEY from the vault?')">
             <input type="hidden" name="key_name" value="PEXELS_API_KEY">
+            <button type="submit" class="btn-remove">&#215; Remove</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="key-row">
+        <div class="key-header">
+          <span class="key-label">Pixabay API Key</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="key-env-name">PIXABAY_API_KEY</span>
+            {% if keys.PIXABAY_API_KEY.source == 'env' %}
+              <span class="source-badge src-env">ENV</span>
+              <span class="status-dot dot-ok"></span>
+            {% elif keys.PIXABAY_API_KEY.source == 'saved' %}
+              <span class="source-badge src-saved">Saved</span>
+              <span class="status-dot dot-ok"></span>
+            {% else %}
+              <span class="source-badge src-none">Not set</span>
+              <span class="status-dot dot-warn"></span>
+            {% endif %}
+          </div>
+        </div>
+        <p class="key-desc">Pixabay video clips — fallback source for B-roll if Pexels quota is exhausted.</p>
+        {% if keys.PIXABAY_API_KEY.masked %}
+          <div style="margin-bottom:8px;"><span class="current-val">Current: {{ keys.PIXABAY_API_KEY.masked }}</span></div>
+        {% endif %}
+        <div class="key-input-row">
+          <input type="password" name="PIXABAY_API_KEY" placeholder="Enter new key to update, or leave blank to keep existing" autocomplete="off">
+          {% if keys.PIXABAY_API_KEY.source == 'saved' %}
+          <form method="POST" action="{{ url_for('admin_settings_clear_key') }}" onsubmit="return confirm('Remove PIXABAY_API_KEY from the vault?')">
+            <input type="hidden" name="key_name" value="PIXABAY_API_KEY">
+            <button type="submit" class="btn-remove">&#215; Remove</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- VOICE PROVIDERS -->
+    <div class="card" style="margin-top:20px;">
+      <div class="section-label">Voice Providers</div>
+
+      <div class="key-row">
+        <div class="key-header">
+          <span class="key-label">Vibe Voice API Key</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="key-env-name">VIBE_VOICE_API_KEY</span>
+            {% if keys.VIBE_VOICE_API_KEY.source == 'env' %}
+              <span class="source-badge src-env">ENV</span>
+              <span class="status-dot dot-ok"></span>
+            {% elif keys.VIBE_VOICE_API_KEY.source == 'saved' %}
+              <span class="source-badge src-saved">Saved</span>
+              <span class="status-dot dot-ok"></span>
+            {% else %}
+              <span class="source-badge src-none">Not set</span>
+              <span class="status-dot dot-warn"></span>
+            {% endif %}
+          </div>
+        </div>
+        <p class="key-desc">Vibe Voice TTS — additional voice provider for narration.</p>
+        {% if keys.VIBE_VOICE_API_KEY.masked %}
+          <div style="margin-bottom:8px;"><span class="current-val">Current: {{ keys.VIBE_VOICE_API_KEY.masked }}</span></div>
+        {% endif %}
+        <div class="key-input-row">
+          <input type="password" name="VIBE_VOICE_API_KEY" placeholder="Enter new key to update, or leave blank to keep existing" autocomplete="off">
+          {% if keys.VIBE_VOICE_API_KEY.source == 'saved' %}
+          <form method="POST" action="{{ url_for('admin_settings_clear_key') }}" onsubmit="return confirm('Remove VIBE_VOICE_API_KEY from the vault?')">
+            <input type="hidden" name="key_name" value="VIBE_VOICE_API_KEY">
+            <button type="submit" class="btn-remove">&#215; Remove</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="key-row">
+        <div class="key-header">
+          <span class="key-label">MUAPI Key</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="key-env-name">MUAPI_API_KEY</span>
+            {% if keys.MUAPI_API_KEY.source == 'env' %}
+              <span class="source-badge src-env">ENV</span>
+              <span class="status-dot dot-ok"></span>
+            {% elif keys.MUAPI_API_KEY.source == 'saved' %}
+              <span class="source-badge src-saved">Saved</span>
+              <span class="status-dot dot-ok"></span>
+            {% else %}
+              <span class="source-badge src-none">Not set</span>
+              <span class="status-dot dot-warn"></span>
+            {% endif %}
+          </div>
+        </div>
+        <p class="key-desc">MUAPI — music and audio generation for background tracks.</p>
+        {% if keys.MUAPI_API_KEY.masked %}
+          <div style="margin-bottom:8px;"><span class="current-val">Current: {{ keys.MUAPI_API_KEY.masked }}</span></div>
+        {% endif %}
+        <div class="key-input-row">
+          <input type="password" name="MUAPI_API_KEY" placeholder="Enter new key to update, or leave blank to keep existing" autocomplete="off">
+          {% if keys.MUAPI_API_KEY.source == 'saved' %}
+          <form method="POST" action="{{ url_for('admin_settings_clear_key') }}" onsubmit="return confirm('Remove MUAPI_API_KEY from the vault?')">
+            <input type="hidden" name="key_name" value="MUAPI_API_KEY">
+            <button type="submit" class="btn-remove">&#215; Remove</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- MINIMAX AI -->
+    <div class="card" style="margin-top:20px;">
+      <div class="section-label">MiniMax AI (Key Rotation)</div>
+
+      {% for mk in [("MINIMAX_KEY_1", "MiniMax Key 1", "Primary MiniMax API key"), ("MINIMAX_KEY_2", "MiniMax Key 2", "Rotation key — used when Key 1 is exhausted"), ("MINIMAX_KEY_3", "MiniMax Key 3", "Rotation key — final fallback")] %}
+      <div class="key-row">
+        <div class="key-header">
+          <span class="key-label">{{ mk[1] }}</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="key-env-name">{{ mk[0] }}</span>
+            {% if keys[mk[0]].source == 'env' %}
+              <span class="source-badge src-env">ENV</span>
+              <span class="status-dot dot-ok"></span>
+            {% elif keys[mk[0]].source == 'saved' %}
+              <span class="source-badge src-saved">Saved</span>
+              <span class="status-dot dot-ok"></span>
+            {% else %}
+              <span class="source-badge src-none">Not set</span>
+              <span class="status-dot dot-warn"></span>
+            {% endif %}
+          </div>
+        </div>
+        <p class="key-desc">{{ mk[2] }}</p>
+        {% if keys[mk[0]].masked %}
+          <div style="margin-bottom:8px;"><span class="current-val">Current: {{ keys[mk[0]].masked }}</span></div>
+        {% endif %}
+        <div class="key-input-row">
+          <input type="password" name="{{ mk[0] }}" placeholder="Enter new key to update, or leave blank to keep existing" autocomplete="off">
+          {% if keys[mk[0]].source == 'saved' %}
+          <form method="POST" action="{{ url_for('admin_settings_clear_key') }}" onsubmit="return confirm('Remove {{ mk[0] }} from the vault?')">
+            <input type="hidden" name="key_name" value="{{ mk[0] }}">
+            <button type="submit" class="btn-remove">&#215; Remove</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- KLING AI VIDEO -->
+    <div class="card" style="margin-top:20px;">
+      <div class="section-label">Kling AI Video Generation</div>
+
+      <div class="key-row">
+        <div class="key-header">
+          <span class="key-label">Kling Access Key</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="key-env-name">KLING_ACCESS_KEY</span>
+            {% if keys.KLING_ACCESS_KEY.source == 'env' %}
+              <span class="source-badge src-env">ENV</span>
+              <span class="status-dot dot-ok"></span>
+            {% elif keys.KLING_ACCESS_KEY.source == 'saved' %}
+              <span class="source-badge src-saved">Saved</span>
+              <span class="status-dot dot-ok"></span>
+            {% else %}
+              <span class="source-badge src-none">Not set</span>
+              <span class="status-dot dot-warn"></span>
+            {% endif %}
+          </div>
+        </div>
+        <p class="key-desc">Kling AI — access key for AI video clip generation.</p>
+        {% if keys.KLING_ACCESS_KEY.masked %}
+          <div style="margin-bottom:8px;"><span class="current-val">Current: {{ keys.KLING_ACCESS_KEY.masked }}</span></div>
+        {% endif %}
+        <div class="key-input-row">
+          <input type="password" name="KLING_ACCESS_KEY" placeholder="Enter new key to update, or leave blank to keep existing" autocomplete="off">
+          {% if keys.KLING_ACCESS_KEY.source == 'saved' %}
+          <form method="POST" action="{{ url_for('admin_settings_clear_key') }}" onsubmit="return confirm('Remove KLING_ACCESS_KEY from the vault?')">
+            <input type="hidden" name="key_name" value="KLING_ACCESS_KEY">
+            <button type="submit" class="btn-remove">&#215; Remove</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="key-row">
+        <div class="key-header">
+          <span class="key-label">Kling Secret Key</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="key-env-name">KLING_SECRET_KEY</span>
+            {% if keys.KLING_SECRET_KEY.source == 'env' %}
+              <span class="source-badge src-env">ENV</span>
+              <span class="status-dot dot-ok"></span>
+            {% elif keys.KLING_SECRET_KEY.source == 'saved' %}
+              <span class="source-badge src-saved">Saved</span>
+              <span class="status-dot dot-ok"></span>
+            {% else %}
+              <span class="source-badge src-none">Not set</span>
+              <span class="status-dot dot-warn"></span>
+            {% endif %}
+          </div>
+        </div>
+        <p class="key-desc">Kling AI — secret key paired with the access key.</p>
+        {% if keys.KLING_SECRET_KEY.masked %}
+          <div style="margin-bottom:8px;"><span class="current-val">Current: {{ keys.KLING_SECRET_KEY.masked }}</span></div>
+        {% endif %}
+        <div class="key-input-row">
+          <input type="password" name="KLING_SECRET_KEY" placeholder="Enter new key to update, or leave blank to keep existing" autocomplete="off">
+          {% if keys.KLING_SECRET_KEY.source == 'saved' %}
+          <form method="POST" action="{{ url_for('admin_settings_clear_key') }}" onsubmit="return confirm('Remove KLING_SECRET_KEY from the vault?')">
+            <input type="hidden" name="key_name" value="KLING_SECRET_KEY">
+            <button type="submit" class="btn-remove">&#215; Remove</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- INTEGRATIONS -->
+    <div class="card" style="margin-top:20px;">
+      <div class="section-label">Integrations &amp; Payments</div>
+
+      <div class="key-row">
+        <div class="key-header">
+          <span class="key-label">Resend API Key</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="key-env-name">RESEND_API_KEY</span>
+            {% if keys.RESEND_API_KEY.source == 'env' %}
+              <span class="source-badge src-env">ENV</span>
+              <span class="status-dot dot-ok"></span>
+            {% elif keys.RESEND_API_KEY.source == 'saved' %}
+              <span class="source-badge src-saved">Saved</span>
+              <span class="status-dot dot-ok"></span>
+            {% else %}
+              <span class="source-badge src-none">Not set</span>
+              <span class="status-dot dot-warn"></span>
+            {% endif %}
+          </div>
+        </div>
+        <p class="key-desc">Resend — transactional email delivery (invite links, notifications).</p>
+        {% if keys.RESEND_API_KEY.masked %}
+          <div style="margin-bottom:8px;"><span class="current-val">Current: {{ keys.RESEND_API_KEY.masked }}</span></div>
+        {% endif %}
+        <div class="key-input-row">
+          <input type="password" name="RESEND_API_KEY" placeholder="Enter new key to update, or leave blank to keep existing" autocomplete="off">
+          {% if keys.RESEND_API_KEY.source == 'saved' %}
+          <form method="POST" action="{{ url_for('admin_settings_clear_key') }}" onsubmit="return confirm('Remove RESEND_API_KEY from the vault?')">
+            <input type="hidden" name="key_name" value="RESEND_API_KEY">
+            <button type="submit" class="btn-remove">&#215; Remove</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="key-row">
+        <div class="key-header">
+          <span class="key-label">NOWPayments Public Key</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="key-env-name">NOWPAYMENTS_PUBLIC_KEY</span>
+            {% if keys.NOWPAYMENTS_PUBLIC_KEY.source == 'env' %}
+              <span class="source-badge src-env">ENV</span>
+              <span class="status-dot dot-ok"></span>
+            {% elif keys.NOWPAYMENTS_PUBLIC_KEY.source == 'saved' %}
+              <span class="source-badge src-saved">Saved</span>
+              <span class="status-dot dot-ok"></span>
+            {% else %}
+              <span class="source-badge src-none">Not set</span>
+              <span class="status-dot dot-warn"></span>
+            {% endif %}
+          </div>
+        </div>
+        <p class="key-desc">NOWPayments — crypto payment gateway public key.</p>
+        {% if keys.NOWPAYMENTS_PUBLIC_KEY.masked %}
+          <div style="margin-bottom:8px;"><span class="current-val">Current: {{ keys.NOWPAYMENTS_PUBLIC_KEY.masked }}</span></div>
+        {% endif %}
+        <div class="key-input-row">
+          <input type="password" name="NOWPAYMENTS_PUBLIC_KEY" placeholder="Enter new key to update, or leave blank to keep existing" autocomplete="off">
+          {% if keys.NOWPAYMENTS_PUBLIC_KEY.source == 'saved' %}
+          <form method="POST" action="{{ url_for('admin_settings_clear_key') }}" onsubmit="return confirm('Remove NOWPAYMENTS_PUBLIC_KEY from the vault?')">
+            <input type="hidden" name="key_name" value="NOWPAYMENTS_PUBLIC_KEY">
+            <button type="submit" class="btn-remove">&#215; Remove</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="key-row">
+        <div class="key-header">
+          <span class="key-label">NOWPayments API Key</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="key-env-name">NOWPAYMENTS_API_KEY</span>
+            {% if keys.NOWPAYMENTS_API_KEY.source == 'env' %}
+              <span class="source-badge src-env">ENV</span>
+              <span class="status-dot dot-ok"></span>
+            {% elif keys.NOWPAYMENTS_API_KEY.source == 'saved' %}
+              <span class="source-badge src-saved">Saved</span>
+              <span class="status-dot dot-ok"></span>
+            {% else %}
+              <span class="source-badge src-none">Not set</span>
+              <span class="status-dot dot-warn"></span>
+            {% endif %}
+          </div>
+        </div>
+        <p class="key-desc">NOWPayments — crypto payment gateway API key for server-side calls.</p>
+        {% if keys.NOWPAYMENTS_API_KEY.masked %}
+          <div style="margin-bottom:8px;"><span class="current-val">Current: {{ keys.NOWPAYMENTS_API_KEY.masked }}</span></div>
+        {% endif %}
+        <div class="key-input-row">
+          <input type="password" name="NOWPAYMENTS_API_KEY" placeholder="Enter new key to update, or leave blank to keep existing" autocomplete="off">
+          {% if keys.NOWPAYMENTS_API_KEY.source == 'saved' %}
+          <form method="POST" action="{{ url_for('admin_settings_clear_key') }}" onsubmit="return confirm('Remove NOWPAYMENTS_API_KEY from the vault?')">
+            <input type="hidden" name="key_name" value="NOWPAYMENTS_API_KEY">
+            <button type="submit" class="btn-remove">&#215; Remove</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="key-row">
+        <div class="key-header">
+          <span class="key-label">GitHub Token</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="key-env-name">GITHUB_TOKEN</span>
+            {% if keys.GITHUB_TOKEN.source == 'env' %}
+              <span class="source-badge src-env">ENV</span>
+              <span class="status-dot dot-ok"></span>
+            {% elif keys.GITHUB_TOKEN.source == 'saved' %}
+              <span class="source-badge src-saved">Saved</span>
+              <span class="status-dot dot-ok"></span>
+            {% else %}
+              <span class="source-badge src-none">Not set</span>
+              <span class="status-dot dot-warn"></span>
+            {% endif %}
+          </div>
+        </div>
+        <p class="key-desc">GitHub personal access token for repo automation and API calls.</p>
+        {% if keys.GITHUB_TOKEN.masked %}
+          <div style="margin-bottom:8px;"><span class="current-val">Current: {{ keys.GITHUB_TOKEN.masked }}</span></div>
+        {% endif %}
+        <div class="key-input-row">
+          <input type="password" name="GITHUB_TOKEN" placeholder="Enter new key to update, or leave blank to keep existing" autocomplete="off">
+          {% if keys.GITHUB_TOKEN.source == 'saved' %}
+          <form method="POST" action="{{ url_for('admin_settings_clear_key') }}" onsubmit="return confirm('Remove GITHUB_TOKEN from the vault?')">
+            <input type="hidden" name="key_name" value="GITHUB_TOKEN">
             <button type="submit" class="btn-remove">&#215; Remove</button>
           </form>
           {% endif %}
@@ -2000,6 +2560,75 @@ SETTINGS_PAGE = """
       {% else %}
       <div style="background:#080808;border:1px solid #111;border-radius:9px;padding:16px 18px;font-size:.78rem;color:var(--muted);text-align:center;">
         No retention data yet — scores appear after your first videos have been live for 48+ hours. Click <strong style="color:#e8e0d0;">Run Analysis Now</strong> to check.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- TITLE INTELLIGENCE PANEL -->
+  <div style="margin-top:32px;">
+    <div class="section-label" style="margin-bottom:14px;">Title Intelligence — A/B View Tracker</div>
+    <div class="card">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px;">
+        <div style="flex:1;min-width:200px;">
+          <div style="font-size:.82rem;font-weight:900;color:#e8e0d0;margin-bottom:6px;">Real-View Feedback Loop</div>
+          <p class="key-desc" style="margin-bottom:0;">
+            Every 24 hours the tracker fetches real YouTube view counts for all published videos.
+            When a title crosses <strong style="color:#e8e0d0;">100 views</strong> it is written to the hook memory —
+            teaching the SEO Oracle which psychological triggers and phrasing structures are
+            actually driving clicks. Runs daily at 07:00 UTC, or trigger it manually below.
+          </p>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end;flex-shrink:0;">
+          <form method="POST" action="{{ url_for('admin_run_title_tracker') }}">
+            <button type="submit" class="btn-action">&#9654; Poll Views Now</button>
+          </form>
+        </div>
+      </div>
+
+      <!-- stat pills -->
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;">
+        <div style="background:#080808;border:1px solid #1a1a1a;border-radius:9px;padding:10px 18px;text-align:center;min-width:100px;">
+          <div style="font-size:1.4rem;font-weight:900;color:var(--gold);">{{ title_summary.tracked_winners }}</div>
+          <div style="font-size:.65rem;font-weight:900;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-top:3px;">Winners Tracked</div>
+        </div>
+        <div style="background:#080808;border:1px solid #1a1a1a;border-radius:9px;padding:10px 18px;text-align:center;min-width:100px;">
+          <div style="font-size:1.4rem;font-weight:900;color:#86efac;">{{ title_summary.memory_size }}</div>
+          <div style="font-size:.65rem;font-weight:900;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-top:3px;">Hook Memory</div>
+        </div>
+        {% for trigger, count in title_summary.trigger_counts.items() %}
+        <div style="background:#080808;border:1px solid #1a1a1a;border-radius:9px;padding:10px 18px;text-align:center;min-width:90px;">
+          <div style="font-size:1.2rem;font-weight:900;color:#c4b5fd;">{{ count }}</div>
+          <div style="font-size:.62rem;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-top:3px;">{{ trigger }}</div>
+        </div>
+        {% endfor %}
+      </div>
+
+      {% if title_summary.top_patterns %}
+      <!-- top winning titles -->
+      <div style="font-size:.65rem;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;">Top Performing Titles</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        {% for p in title_summary.top_patterns %}
+        <div style="display:flex;align-items:center;gap:12px;background:#060606;border:1px solid #181818;border-radius:9px;padding:10px 14px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:.82rem;font-weight:700;color:#e8e0d0;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+              {{ p.title }}{% if p.has_emoji %} <span style="font-size:.65rem;background:rgba(196,181,253,.12);border:1px solid rgba(196,181,253,.25);color:#c4b5fd;padding:1px 6px;border-radius:5px;margin-left:4px;vertical-align:middle;">emoji</span>{% endif %}
+            </div>
+            <div style="font-size:.68rem;color:var(--muted);margin-top:3px;">
+              Trigger: <span style="color:#a0916c;font-weight:700;">{{ p.trigger }}</span>
+              {% if p.seed %}&nbsp;&bull;&nbsp;seed: {{ p.seed[:40] }}{% if p.seed|length > 40 %}…{% endif %}{% endif %}
+            </div>
+          </div>
+          <div style="flex-shrink:0;text-align:right;">
+            <div style="font-size:1.05rem;font-weight:900;color:#86efac;">{{ "{:,}".format(p.views) }}</div>
+            <div style="font-size:.62rem;font-weight:900;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);">views</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div style="background:#080808;border:1px solid #111;border-radius:9px;padding:16px 18px;font-size:.78rem;color:var(--muted);text-align:center;">
+        No title winners recorded yet — scores appear after videos have been live 24+ hours and crossed 100 views. Click <strong style="color:#e8e0d0;">Poll Views Now</strong> to check.
       </div>
       {% endif %}
     </div>
@@ -2795,8 +3424,13 @@ DASHBOARD_PAGE = """
 # ─────────────────────────────────────────────
 def build_prompt(description: str) -> str:
     return f"""
-You are a short-form faceless video strategist. Create a complete plan for a viral 30-60 second faceless video:
+You are a short-form faceless video strategist for dark psychology, behavioral
+persuasion, social manipulation, and behavioral traps. Create a complete plan
+for a viral 30-60 second faceless video:
 {description}
+Keep the script focused on recognizing influence tactics and protecting personal
+agency. Use cinematic dark psychology keywords for the visual search. Do not
+generate crypto, tokenomics, or generic wealth content.
 Return only valid JSON with exactly these keys:
 - script, keywords (5 phrases), music_mood
 Do not include markdown, commentary, or extra keys.
@@ -2855,7 +3489,7 @@ def get_pexels_links(keywords: list[str]) -> list[dict]:
         flash("PEXELS_API_KEY not set.")
         return []
     links = []
-    for kw in keywords:
+    for kw in viral_engine._mood_media_queries(keywords):
         try:
             r = requests.get("https://api.pexels.com/videos/search", headers={"Authorization": api_key},
                              params={"query": kw, "orientation": "portrait", "per_page": 1}, timeout=20)
@@ -2888,28 +3522,130 @@ def age_fmt(ts: int) -> str:
 # ─────────────────────────────────────────────
 #  ROUTES
 # ─────────────────────────────────────────────
+_runtime_cache_lock = threading.Lock()
+_runtime_cache_refreshing = False
+_runtime_cache_updated_at = 0.0
+_runtime_cache: dict = {
+    "quote": VAULT_QUOTES[0],
+    "quotes_json": json.dumps(VAULT_QUOTES),
+    "youtube_ready": False,
+    "pexels_ready": False,
+    "gemini_ready": False,
+    "elevenlabs_ready": False,
+    "openrouter_ready": False,
+    "scheduler_running": False,
+    "redirect_uri": "",
+    "latest_job": None,
+    "job_progress": 5,
+    "trending_videos": [],
+    "trend_updated": None,
+    "ab_mode_default": False,
+    "affiliate_url": "",
+    "affiliate_cta": "",
+}
+
+_empty_dashboard: dict = {
+    "rows": [],
+    "totals": {
+        "videos": 0, "views": 0, "likes": 0, "comments": 0,
+        "watch_minutes": 0, "avg_retention": None, "avg_ctr": None,
+    },
+}
+_dashboard_cache_lock = threading.Lock()
+_dashboard_cache_refreshing = False
+_dashboard_cache_updated_at = 0.0
+_dashboard_cache: dict = copy.deepcopy(_empty_dashboard)
+
+
+def _refresh_runtime_cache() -> None:
+    global _runtime_cache_refreshing, _runtime_cache_updated_at
+    try:
+        trending = trend_hunter.get_trending()
+        latest = viral_engine.latest_job()
+        refreshed = {
+            "quote": random.choice(VAULT_QUOTES),
+            "quotes_json": json.dumps(VAULT_QUOTES),
+            "youtube_ready": youtube_auth.has_token(),
+            "pexels_ready": bool(os.environ.get("PEXELS_API_KEY") or os.environ.get("PIXABAY_API_KEY")),
+            "gemini_ready": bool(os.environ.get("GEMINI_API_KEY")),
+            "elevenlabs_ready": bool(os.environ.get("ELEVENLABS_API_KEY")),
+            "openrouter_ready": bool(os.environ.get("OPENROUTER_API_KEY")),
+            "scheduler_running": bool(globals().get("_scheduler_state", {}).get("running")),
+            "redirect_uri": youtube_auth.get_redirect_uri(),
+            "latest_job": latest,
+            "job_progress": _job_progress(latest.state if latest else "done"),
+            "trending_videos": trending.get("videos", []),
+            "trend_updated": trending.get("updated_at"),
+            "ab_mode_default": youtube_auth.has_token(),
+            "affiliate_url": affiliate_comments.get_affiliate_url(),
+            "affiliate_cta": affiliate_comments.get_affiliate_cta(),
+        }
+        with _runtime_cache_lock:
+            _runtime_cache.update(refreshed)
+            _runtime_cache_updated_at = time.monotonic()
+    except Exception as err:
+        app.logger.debug("runtime cache refresh failed: %s", err)
+    finally:
+        with _runtime_cache_lock:
+            _runtime_cache_refreshing = False
+
+
+def _queue_runtime_cache_refresh() -> None:
+    global _runtime_cache_refreshing
+    with _runtime_cache_lock:
+        if (
+            _runtime_cache_refreshing
+            or time.monotonic() - _runtime_cache_updated_at < 10
+        ):
+            return
+        _runtime_cache_refreshing = True
+    threading.Thread(
+        target=_refresh_runtime_cache,
+        daemon=True,
+        name="runtime-cache-refresh",
+    ).start()
+
+
+def _refresh_dashboard_cache() -> None:
+    global _dashboard_cache_refreshing, _dashboard_cache_updated_at
+    try:
+        if youtube_auth.has_token():
+            refreshed = dashboard.build_dashboard()
+        else:
+            refreshed = copy.deepcopy(_empty_dashboard)
+        with _dashboard_cache_lock:
+            _dashboard_cache.clear()
+            _dashboard_cache.update(refreshed)
+            _dashboard_cache_updated_at = time.monotonic()
+    except Exception as err:
+        app.logger.debug("dashboard cache refresh failed: %s", err)
+    finally:
+        with _dashboard_cache_lock:
+            _dashboard_cache_refreshing = False
+
+
+def _queue_dashboard_cache_refresh() -> None:
+    global _dashboard_cache_refreshing
+    with _dashboard_cache_lock:
+        if (
+            _dashboard_cache_refreshing
+            or time.monotonic() - _dashboard_cache_updated_at < 120
+        ):
+            return
+        _dashboard_cache_refreshing = True
+    threading.Thread(
+        target=_refresh_dashboard_cache,
+        daemon=True,
+        name="dashboard-cache-refresh",
+    ).start()
+
+
 def _vault_ctx() -> dict:
-    trending = trend_hunter.get_trending()
-    import random as _r
-    return dict(
-        quote=_r.choice(VAULT_QUOTES),
-        quotes_json=json.dumps(VAULT_QUOTES),
-        youtube_ready=youtube_auth.has_token(),
-        pexels_ready=bool(os.environ.get("PEXELS_API_KEY")),
-        gemini_ready=bool(os.environ.get("GEMINI_API_KEY")),
-        elevenlabs_ready=bool(os.environ.get("ELEVENLABS_API_KEY")),
-        openrouter_ready=bool(os.environ.get("OPENROUTER_API_KEY")),
-        scheduler_running=_scheduler_state["running"],
-        redirect_uri=youtube_auth.get_redirect_uri(),
-        latest_job=viral_engine.latest_job(),
-        job_progress=_job_progress(viral_engine.latest_job().state if viral_engine.latest_job() else "done"),
-        trending_videos=trending.get("videos", []),
-        trend_updated=trending.get("updated_at"),
-        ab_mode_default=youtube_auth.has_token(),
-        description="",
-        affiliate_url=affiliate_comments.get_affiliate_url(),
-        affiliate_cta=affiliate_comments.get_affiliate_cta(),
-    )
+    _queue_runtime_cache_refresh()
+    with _runtime_cache_lock:
+        context = copy.copy(_runtime_cache)
+    context["description"] = ""
+    return context
 
 
 # ─────────────────────────────────────────────
@@ -3077,10 +3813,33 @@ def acknowledge_alert(index: int):
     return redirect(url_for("view_users"))
 
 
+@app.post("/admin/reset-clip-tracker")
+@admin_required
+def reset_clip_tracker():
+    source = request.form.get("source") or None  # None = reset all
+    try:
+        import asset_tracker
+        before = asset_tracker.total_used(source)
+        asset_tracker.reset(source)
+        after  = asset_tracker.total_used(source)
+        label  = source or "ALL"
+        msg    = f"Clip tracker reset ({label}): {before} IDs cleared, {after} remaining."
+        log.info(msg)
+    except Exception as e:
+        msg = f"Reset failed: {e}"
+        log.error(msg)
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    if is_ajax:
+        return jsonify({"ok": True, "message": msg})
+    flash(msg)
+    return redirect(url_for("index"))
+
+
 # ─────────────────────────────────────────────
 #  PROTECTED ROUTES
 # ─────────────────────────────────────────────
 @app.get("/")
+@app.get("/index")
 @login_required
 def index():
     ctx = _vault_ctx()
@@ -3088,33 +3847,61 @@ def index():
     return render_template_string(VAULT_PAGE, **ctx)
 
 
+@app.get("/api/next-upload")
+def api_next_upload():
+    """Return the timestamp of the next scheduled automated upload."""
+    sched = _scheduler_state.get("scheduler")
+    if not sched:
+        return jsonify({"next_ts": None, "error": "scheduler not running"})
+    jobs = [sched.get_job("morning_london"), sched.get_job("evening_ny")]
+    next_times = [j.next_run_time for j in jobs if j and getattr(j, "next_run_time", None)]
+    if not next_times:
+        return jsonify({"next_ts": None})
+    earliest = min(next_times)
+    return jsonify({"next_ts": earliest.timestamp(), "iso": earliest.isoformat()})
+
+
 @app.post("/force-upload")
 @admin_required
 def force_upload():
-    if not os.environ.get("PEXELS_API_KEY"):
-        flash("Set PEXELS_API_KEY before uploading.")
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
+    def _err(msg):
+        if is_ajax:
+            return jsonify({"ok": False, "message": msg})
+        flash(msg)
         return redirect(url_for("index"))
+
+    _load_api_keys_into_env()
+
+    missing = []
+    if not (os.environ.get("PEXELS_API_KEY") or os.environ.get("PIXABAY_API_KEY")):
+        missing.append("PEXELS_API_KEY or PIXABAY_API_KEY")
     if not os.environ.get("GEMINI_API_KEY"):
-        flash("Set GEMINI_API_KEY before uploading.")
-        return redirect(url_for("index"))
-    # Block if 2 pipelines are already running (thread pool limit)
-    if viral_engine.active_job_count() >= 2:
-        flash("Pipeline is already running — check the tracker above. Please wait for it to finish.")
-        return redirect(url_for("index"))
+        missing.append("GEMINI_API_KEY")
+    if missing:
+        return _err(f"Missing required keys: {', '.join(missing)}. Check API Settings.")
+
+    if viral_engine.is_pipeline_running():
+        if is_ajax:
+            return jsonify({"ok": False, "message": "Pipeline is already running — wait for it to finish."}), 429
+        return _err("Pipeline is already running — wait for it to finish.")
+
     seed = (request.form.get("seed") or "").strip() or viral_engine.random_seed()
     ab = bool(request.form.get("ab_mode"))
     do_upload = youtube_auth.has_token()
     try:
-        viral_engine.run_in_background(seed, do_upload=do_upload, ab_mode=ab)
+        job = viral_engine.run_in_background(seed, do_upload=do_upload, ab_mode=ab)
     except Exception as exc:
         app.logger.error("force_upload failed to start pipeline: %s", exc)
-        flash(f"Could not start pipeline: {exc}")
-        return redirect(url_for("index"))
+        return _err(f"Could not start pipeline: {exc}")
     if not do_upload:
         flash("Pipeline started — YouTube not connected yet so rendering only. Authorize YouTube to enable auto-upload.")
     else:
         msg = "A/B test pipeline started." if ab else "Pipeline started — generating and uploading your Short now."
         flash(msg + " Watch the tracker for live progress.")
+    if is_ajax:
+        return jsonify({"ok": True, "job_id": job.id, "message": "Pipeline started!"})
     return redirect(url_for("index"))
 
 
@@ -3262,18 +4049,11 @@ def view_ab_tests():
 @app.get("/dashboard")
 @login_required
 def view_dashboard():
-    if not youtube_auth.has_token():
-        flash("Authorize YouTube first to load performance data.")
-        return render_template_string(
-            DASHBOARD_PAGE, rows=[],
-            totals={"videos": 0, "views": 0, "likes": 0, "comments": 0,
-                    "watch_minutes": 0, "avg_retention": None, "avg_ctr": None},
-        )
-    try:
-        data = dashboard.build_dashboard()
-    except Exception as err:
-        flash(f"Dashboard error: {err}")
-        data = {"rows": [], "totals": {"videos": 0, "views": 0, "likes": 0, "avg_retention": None}}
+    # YouTube API calls and uploads.json reads happen in the refresher thread.
+    # This handler only takes an in-memory snapshot and renders the page.
+    _queue_dashboard_cache_refresh()
+    with _dashboard_cache_lock:
+        data = copy.deepcopy(_dashboard_cache)
     return render_template_string(DASHBOARD_PAGE, **data)
 
 
@@ -3288,7 +4068,9 @@ def generate():
     try:
         result = call_gemini(description)
         fn = f"{int(time.time())}-{safe_slug(description)}-voiceover.mp3"
-        gTTS(text=result["script"], lang="en", slow=False).save(str(OUTPUT_DIR / fn))
+        voice_path, _tier = audio_engine.make_voiceover(result["script"], OUTPUT_DIR)
+        import shutil as _sh
+        _sh.copy(str(voice_path), str(OUTPUT_DIR / fn))
         pexels_links = get_pexels_links(result["keywords"])
     except Exception as err:
         flash(str(err))
@@ -3320,7 +4102,6 @@ def ping():
 
 
 @app.get("/api/job-status")
-@login_required
 def job_status_api():
     job = viral_engine.latest_job()
     if not job:
@@ -3336,6 +4117,55 @@ def job_status_api():
         "started_at": job.started_at,
         "id":         job.id,
     })
+
+
+def _voice_status_payload() -> dict:
+    """Build the voice-status JSON payload for the dashboard panel."""
+    cs = audio_engine.credit_status()
+    tier = audio_engine.active_tier()
+    credits_map = {}
+    el_used  = cs.get("elevenlabs_used")
+    el_limit = cs.get("elevenlabs_limit")
+    if el_used is not None and el_limit is not None:
+        remaining = el_limit - el_used
+        credits_map["ElevenLabs"] = f"{remaining:,} / {el_limit:,} chars"
+    return {
+        "active_tier": tier,
+        "status": {
+            "ElevenLabs": bool(cs.get("ElevenLabs", True)),
+            "Deepgram":   bool(cs.get("Deepgram",   True)),
+            "Fish Audio": bool(cs.get("Fish Audio",  True)),
+        },
+        "credits":    credits_map,
+        "checked_at": cs.get("checked_at", 0),
+    }
+
+
+@app.get("/api/voice-status")
+@login_required
+def api_voice_status():
+    return jsonify(_voice_status_payload())
+
+
+@app.post("/admin/force-voice-repoll")
+@admin_required
+def admin_force_voice_repoll():
+    audio_engine._poll_credits()
+    return jsonify(_voice_status_payload())
+
+
+@app.post("/admin/github-backup")
+@admin_required
+def admin_github_backup():
+    import threading as _t
+    commit_msg = request.form.get("message", "").strip() or None
+
+    def _do_push():
+        result = github_backup.push(commit_msg)
+        app.logger.info("GitHub backup result: %s", result)
+
+    _t.Thread(target=_do_push, daemon=True).start()
+    return jsonify({"ok": True, "message": "Backup started — check logs for result."})
 
 
 def _base_url() -> str:
@@ -3363,7 +4193,12 @@ def view_users():
 
     api_keys = {k: _mask(k) for k in
                 ["GEMINI_API_KEY", "OPENROUTER_API_KEY", "ELEVENLABS_API_KEY",
-                 "PEXELS_API_KEY", "SESSION_SECRET"]}
+                 "DEEPGRAM_API_KEY", "FISH_AUDIO_API_KEY", "VIBE_VOICE_API_KEY",
+                 "MINIMAX_KEY_1", "MINIMAX_KEY_2", "MINIMAX_KEY_3",
+                 "MUAPI_API_KEY", "PEXELS_API_KEY", "PIXABAY_API_KEY",
+                 "KLING_ACCESS_KEY", "KLING_SECRET_KEY",
+                 "RESEND_API_KEY", "NOWPAYMENTS_PUBLIC_KEY", "NOWPAYMENTS_API_KEY",
+                 "GITHUB_TOKEN", "SESSION_SECRET"]}
     alerts = dashboard.list_alerts(unacknowledged_only=True)
     return render_template_string(USERS_PAGE, users=users,
                                   admins=admins, viewers=viewers, total=len(users),
@@ -3471,6 +4306,10 @@ def admin_settings():
         keys[name] = {"source": source, "masked": masked}
     scores = retention_engine.latest_scores(4)
     enrichment = retention_engine.get_prompt_enrichment()
+    try:
+        title_summary = title_ab_tracker.get_summary()
+    except Exception:
+        title_summary = {"tracked_winners": 0, "memory_size": 0, "top_patterns": [], "trigger_counts": {}}
     return render_template_string(
         SETTINGS_PAGE,
         keys=keys,
@@ -3480,6 +4319,7 @@ def admin_settings():
         retention_scores=scores,
         retention_avg=enrichment.get("avg_retention_pct"),
         retention_target=enrichment.get("target_retention", 45.0),
+        title_summary=title_summary,
     )
 
 
@@ -3537,6 +4377,34 @@ def admin_run_retention():
     except Exception as exc:
         flash(f"Retention analysis error: {exc}", "error")
     return redirect(url_for("admin_settings"))
+
+
+@app.post("/admin/settings/run-title-tracker")
+@admin_required
+def admin_run_title_tracker():
+    try:
+        result = title_ab_tracker.poll_and_record()
+        recorded = result.get("recorded", 0)
+        checked  = result.get("checked", 0)
+        if recorded:
+            flash(f"Title tracker: {recorded} new winner(s) recorded from {checked} video(s) checked. Hook memory updated.", "success")
+        elif checked:
+            flash(f"Title tracker ran — {checked} video(s) checked, none yet above the view threshold.", "info")
+        else:
+            flash("Title tracker ran — no eligible videos yet (videos must be at least 24 hours old and have YouTube auth).", "info")
+    except Exception as exc:
+        flash(f"Title tracker error: {exc}", "error")
+    return redirect(url_for("admin_settings"))
+
+
+@app.get("/admin/title-intelligence")
+@admin_required
+def admin_title_intelligence():
+    """JSON endpoint — returns top patterns + trigger breakdown for AJAX refresh."""
+    try:
+        return jsonify(title_ab_tracker.get_summary())
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
 
 
 @app.post("/admin/settings/invite-only")
@@ -3649,11 +4517,11 @@ h1{font-size:1.6rem;font-weight:950;letter-spacing:-.02em;color:var(--gold);marg
         <div class="phone-notch"></div>
         <div class="phone-bg"></div>
         <div class="phone-bars"></div>
-        <div class="phone-tag">#WealthVault #Shorts</div>
+        <div class="phone-tag">#DarkMindFiles #Shorts</div>
         <div class="caption-stage">
           <div class="caption-word" id="cap">TAP PLAY</div>
         </div>
-        <div class="wm">Crypto Affiliate Hub</div>
+        <div class="wm">Dark Psychology Files</div>
       </div>
       <div class="timer-bar"><div class="timer-fill" id="tbar"></div></div>
       <button class="play-btn" id="playBtn" onclick="startReel()">
@@ -3671,7 +4539,7 @@ h1{font-size:1.6rem;font-weight:950;letter-spacing:-.02em;color:var(--gold);marg
       <!-- Pipeline badges -->
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;">
         <span class="pipeline-badge pb-ok">&#10003; Script — Gemini 1.5 Flash</span>
-        <span class="pipeline-badge pb-ok">&#10003; Voice — ElevenLabs Brian</span>
+        <span class="pipeline-badge pb-ok">&#10003; Voice — ElevenLabs Adam</span>
         <span class="pipeline-badge pb-ok">&#10003; B-roll — 8 Pexels clips</span>
         <span class="pipeline-badge pb-ok">&#10003; MoviePy render — 30 fps</span>
         <span class="pipeline-badge pb-model">SEO Oracle — 5 title variants</span>
@@ -3687,19 +4555,19 @@ h1{font-size:1.6rem;font-weight:950;letter-spacing:-.02em;color:var(--gold);marg
       <!-- Script -->
       <div class="card">
         <div class="card-title">Generated Script</div>
-        <div class="script-text">They don't want you to know this.
+        <div class="script-text">The pause after a request can reveal who needs the deal more.
 
-The elite don't work harder — they work on things that <em>compound</em>. <span class="pause-mark">[pause]</span>
+ When someone rushes your answer, notice the frame they set before the facts. <span class="pause-mark">[pause]</span>
 
-While you trade time for money, they build systems that earn while they sleep. The silent weapon isn't discipline. It's strategic invisibility. <span class="pause-mark">[pause]</span>
+ A pressure tactic often shrinks your options, then asks you to defend the smaller choice. <span class="pause-mark">[pause]</span>
 
-The wealthiest minds never reveal their next move. They let the crowd react — then position themselves ahead of the chaos. <span class="pause-mark">[pause]</span>
+ Name the request, ask for time, and restate your boundary without arguing about motives. <span class="pause-mark">[pause]</span>
 
-Information asymmetry is the real currency. The moment you understand what others don't — you win before the game even starts. <span class="pause-mark">[pause]</span>
+ The nuance is that urgency can be genuine, so test the deadline instead of diagnosing the person.
 
-And that's exactly why they spend millions keeping financial education out of schools.
+ That simple pause keeps persuasion from becoming control.
 
-They don't want you to know this.</div>
+ Follow for more behavioral patterns you can spot in real time.</div>
       </div>
 
       <!-- SEO Titles -->
@@ -3747,7 +4615,7 @@ They don't want you to know this.</div>
 </div>
 
 <script>
-const WORDS = `They don't want you to know this. The elite don't work harder they work on things that compound. While you trade time for money they build systems that earn while they sleep. The silent weapon isn't discipline. It's strategic invisibility. The wealthiest minds never reveal their next move. They let the crowd react then position themselves ahead of the chaos. Information asymmetry is the real currency. The moment you understand what others don't you win before the game even starts. And that's exactly why they spend millions keeping financial education out of schools. They don't want you to know this.`.split(/\s+/).filter(Boolean);
+const WORDS = `The pause after a request can reveal who needs the deal more. When someone rushes your answer notice the frame they set before the facts. A pressure tactic often shrinks your options then asks you to defend the smaller choice. Name the request ask for time and restate your boundary without arguing about motives. The nuance is that urgency can be genuine so test the deadline instead of diagnosing the person. That simple pause keeps persuasion from becoming control. Follow for more behavioral patterns you can spot in real time.`.split(/\s+/).filter(Boolean);
 
 let timer = null;
 let idx = 0;
@@ -3788,27 +4656,27 @@ function startReel() {
 
 def _render_sample_reel():
     titles = [
-        {"title": "The DARK SECRET The Rich Will Never Tell You", "score": 96},
-        {"title": "Why You Stay Broke — And How They Keep It That Way", "score": 91},
-        {"title": "The Silent Weapon of the Elite (Exposed)", "score": 88},
-        {"title": "Financial Education They BANNED From Schools", "score": 85},
-        {"title": "The 1% Blueprint: How Power Compounds in Silence", "score": 82},
+        {"title": "The Pause That Changes The Power Balance", "score": 96},
+        {"title": "Spot The Pressure Frame Before You Agree", "score": 91},
+        {"title": "The Reciprocity Trap Hidden In Small Favors", "score": 88},
+        {"title": "Why Urgency Can Hijack Your Judgment", "score": 85},
+        {"title": "The Boundary Test Most People Miss", "score": 82},
     ]
     keywords = [
-        "dark psychology wealth", "elite money secrets", "financial manipulation",
-        "compound wealth systems", "information asymmetry", "broke mindset trap",
-        "billionaire tactics", "strategic invisibility",
+        "cinematic dark psychology", "pressure framing", "behavioral manipulation",
+        "cognitive bias", "social influence", "boundary setting",
+        "deceptive urgency", "negotiation tactics",
     ]
     tags = [
-        "wealth", "darkpsychology", "shorts", "mindset", "money",
-        "elitesecrets", "financialfreedom", "psychology", "viral",
-        "richvspoor", "WealthVault", "WealthVaultEntry",
+        "darkpsychology", "behavioralpsychology", "persuasion", "shorts", "mindset",
+        "cognitivebias", "socialinfluence", "mindgames", "negotiation",
+        "boundarysetting", "DarkMindFiles", "DarkMindFilesEntry",
     ]
     description = (
-        "The elite don't work harder — they work on systems that compound while you sleep.\n\n"
-        "This isn't motivation. This is the blueprint they don't teach in schools.\n\n"
-        "If this hit, follow for the dark psychology of wealth they hope you never find.\n\n"
-        "#Shorts #Wealth #DarkPsychology #MoneyMindset #EliteSecrets #WealthVault"
+        "The pause after a request can reveal who needs the deal more.\n\n"
+        "Learn to spot pressure framing, reciprocity traps, and deceptive urgency without over-reading ordinary behavior.\n\n"
+        "Follow for practical dark psychology and behavioral persuasion patterns you can recognize in real time.\n\n"
+        "#Shorts #DarkPsychology #BehavioralPsychology #Persuasion #SocialInfluence #DarkMindFiles"
     )
     return render_template_string(
         SAMPLE_REEL_PAGE,
@@ -3848,8 +4716,14 @@ _scheduler_state: dict = {"running": False, "scheduler": None}
 
 
 def _scheduled_job() -> None:
-    if not (youtube_auth.has_token() and os.environ.get("PEXELS_API_KEY") and os.environ.get("GEMINI_API_KEY")):
+    if not (youtube_auth.has_token() and (os.environ.get("PEXELS_API_KEY") or os.environ.get("PIXABAY_API_KEY")) and os.environ.get("GEMINI_API_KEY")):
         return
+    # Human-like randomization: drift upload by 2–6 minutes so the channel
+    # doesn't post at exactly the same second every day (avoids algorithmic
+    # pattern detection). Runs in the scheduler thread — does NOT block the server.
+    _jitter_seconds = random.randint(2, 6) * 60
+    app.logger.info("Scheduler: human-like jitter of %ds before upload.", _jitter_seconds)
+    time.sleep(_jitter_seconds)
     # Settle any 48h-old A/B tests before starting the new run
     try:
         ab_tester.settle_pending_tests()
@@ -3887,7 +4761,7 @@ _last_spike_upload: float = 0.0
 def _spike_check_job() -> None:
     """Runs every 30 minutes. Fires an emergency upload if any keyword has spiked 3x."""
     global _last_spike_upload
-    if not (youtube_auth.has_token() and os.environ.get("PEXELS_API_KEY") and os.environ.get("GEMINI_API_KEY")):
+    if not (youtube_auth.has_token() and (os.environ.get("PEXELS_API_KEY") or os.environ.get("PIXABAY_API_KEY")) and os.environ.get("GEMINI_API_KEY")):
         return
     if (time.time() - _last_spike_upload) < _SPIKE_COOLDOWN:
         return
@@ -3929,6 +4803,14 @@ def start_scheduler() -> None:
         lambda: retention_engine.run_retention_analysis(),
         CronTrigger(hour=6, minute=30),
         id="retention_loop",
+        replace_existing=True,
+    )
+    # Title A/B tracker — runs every 24 hours, polls real view counts for
+    # uploaded videos and feeds winners back into the SEO oracle hook memory
+    sched.add_job(
+        lambda: title_ab_tracker.poll_and_record(),
+        CronTrigger(hour=7, minute=0),
+        id="title_ab_tracker",
         replace_existing=True,
     )
     sched.start()
@@ -3973,7 +4855,8 @@ _load_api_keys_into_env()
 start_scheduler()
 uploader.start()
 _start_keepalive()
+_queue_runtime_cache_refresh()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)

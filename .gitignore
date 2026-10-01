@@ -1,4 +1,75 @@
+# ── Runtime secrets & auth ────────────────────────────────────────────────
+.env
+.env.*
+*.env
 token.json
-*.mp3
+client_secret.json
+credentials.json
+serviceAccountKey.json
+*_secret.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# ── Databases & persistent data stores ───────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# ── Output media & generated content ─────────────────────────────────────
 *.mp4
+*.mov
+*.avi
+*.mkv
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.mp3
+*.wav
+*.zip
+*.aac
+*.ogg
+*.flac
+*backup*.json
+*.backup.json
+*.bak.json
+*.json.bak
 output/
+temp/
+tmp/
+
+# ── Session caches & runtime state ────────────────────────────────────────
+.sessions/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# ── Logs ─────────────────────────────────────────────────────────────────
+*.log
+*.log.*
+
+# ── Replit internal ───────────────────────────────────────────────────────
+.replit
+replit.nix
+.config/
+.cache/
+.local/
+.upm/
+
+# ── OS & editor artifacts ─────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/

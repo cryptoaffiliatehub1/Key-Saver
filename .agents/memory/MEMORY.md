@@ -1,0 +1,3 @@
+- [Master pipeline upgrades](master-pipeline.md) — all 7 master-command features implemented and verified; key constraints for future edits.
+- [Topic memory and originality gate](topic-memory.md) — SQLite history, novelty-selected concepts, and pre-render reality critique are required.
+- [Provider test isolation](provider-test-isolation.md) — import-time provider polling must stay daemonized and be disabled under the offline test flag.
